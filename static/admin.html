@@ -1,0 +1,154 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Admin Dashboard</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; }
+    table { border-collapse: collapse; width: 100%; margin-top: 10px; }
+    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+    th { background: #f2f2f2; }
+    button { padding: 6px 10px; margin-right: 6px; }
+    #loginBox { margin-bottom: 10px; }
+    .small { font-size: 0.9em; color: #666; }
+  </style>
+</head>
+<body>
+  <h1>Admin Dashboard</h1>
+
+  <div id="loginBox">
+    <strong>Login (admin)</strong><br/>
+    <input id="email" placeholder="email" value="bob@example.com" /> 
+    <input id="password" placeholder="password" type="password" value="AdminP@ss1" />
+    <button onclick="doLogin()">Login</button>
+    <button onclick="logout()">Logout</button>
+    <div id="status" class="small"></div>
+  </div>
+
+  <div id="whoami"></div>
+
+  <h2>Users</h2>
+  <div id="message" class="small"></div>
+  <table id="usersTable">
+    <thead><tr><th>ID</th><th>Username</th><th>Email</th><th>Role</th><th>Actions</th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+<script>
+const setMessage = (m, ok=true) => {
+  const el = document.getElementById('message');
+  el.textContent = m;
+  el.style.color = ok ? 'green' : 'red';
+  setTimeout(()=>{ el.textContent = '' }, 5000);
+};
+
+function getToken() { return localStorage.getItem('token') || ''; }
+function setToken(t) { if (t) localStorage.setItem('token', t); else localStorage.removeItem('token'); }
+function getAuthHeader() { const t = getToken(); return t ? { 'Authorization': 'Bearer ' + t } : {}; }
+
+async function doLogin() {
+  const email = document.getElementById('email').value;
+  const password = document.getElementById('password').value;
+  document.getElementById('status').textContent = 'Logging in...';
+  try {
+    const res = await fetch('/login', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ email, password })
+    });
+    const j = await res.json();
+    if (!res.ok) { setMessage(j.error || 'Login failed', false); document.getElementById('status').textContent = ''; return; }
+    if (j.token) {
+      setToken(j.token);
+      document.getElementById('status').textContent = 'Logged in.';
+      loadUsers();
+      whoami();
+    } else {
+      setMessage('No token returned', false);
+    }
+  } catch(e) {
+    setMessage('Network error: ' + e.message, false);
+  }
+}
+
+function logout() {
+  setToken(null);
+  document.getElementById('whoami').textContent = '';
+  document.getElementById('usersTable').querySelector('tbody').innerHTML = '';
+  document.getElementById('status').textContent = 'Logged out';
+}
+
+async function whoami() {
+  const header = getAuthHeader();
+  if (!header.Authorization) return;
+  try {
+    const res = await fetch('/user/profile', { headers: {...header} });
+    if (!res.ok) { document.getElementById('whoami').textContent = ''; return; }
+    const j = await res.json();
+    document.getElementById('whoami').textContent = 'Signed in as: ' + j.profile.email + ' (' + j.profile.role + ')';
+  } catch(e) {}
+}
+
+async function loadUsers() {
+  const header = getAuthHeader();
+  if (!header.Authorization) { setMessage('Not logged in', false); return; }
+  try {
+    const res = await fetch('/admin/users', { headers: {...header} });
+    const j = await res.json();
+    if (!res.ok) { setMessage(j.error || 'Error loading users', false); return; }
+    const tbody = document.querySelector('#usersTable tbody');
+    tbody.innerHTML = '';
+    j.users.forEach(u => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${u.id}</td>
+        <td>${u.username}</td>
+        <td>${u.email}</td>
+        <td>${u.role}</td>
+        <td>
+          <button onclick="toggleRole(${u.id}, '${u.role}')">${u.role === 'Admin' ? 'Demote' : 'Promote'}</button>
+          <button onclick="deleteUser(${u.id})">Delete</button>
+        </td>
+      `;
+      tbody.appendChild(tr);
+    });
+  } catch(e) {
+    setMessage('Network error: ' + e.message, false);
+  }
+}
+
+async function toggleRole(userId, currentRole) {
+  const newRole = currentRole === 'Admin' ? 'User' : 'Admin';
+  if (!confirm(`Change role to ${newRole}?`)) return;
+  try {
+    const res = await fetch('/admin/user/' + userId, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+      body: JSON.stringify({ role: newRole })
+    });
+    const j = await res.json();
+    if (!res.ok) { setMessage(j.error || 'Failed to update user', false); return; }
+    setMessage('User updated');
+    loadUsers();
+  } catch(e) { setMessage('Network error', false); }
+}
+
+async function deleteUser(userId) {
+  if (!confirm('Delete this user? This action is permanent.')) return;
+  try {
+    const res = await fetch('/admin/user/' + userId, {
+      method: 'DELETE',
+      headers: { ...getAuthHeader() }
+    });
+    const j = await res.json();
+    if (!res.ok) { setMessage(j.error || 'Failed to delete', false); return; }
+    setMessage('User deleted');
+    loadUsers();
+  } catch(e) { setMessage('Network error', false); }
+}
+
+// Auto-load if token present
+if (getToken()) { whoami(); loadUsers(); }
+</script>
+</body>
+</html>
